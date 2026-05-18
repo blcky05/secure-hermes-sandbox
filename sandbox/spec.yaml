@@ -1,102 +1,36 @@
-schemaVersion: "1"
-kind: agent
-name: hermes
+schemaVersion: '1'
+kind: mixin
+name: hermes-secure
 displayName: Hermes (Secure Sandbox)
 description: >-
-  NousResearch Hermes in a sbx microVM. Web search is routed through a
-  local Presidio scrubber to self-hosted Firecrawl; LLM-provider keys
-  stay on the host and are injected by the sbx credential proxy.
-
-agent:
-  image: "docker/sandbox-templates:shell-docker"
-  aiFilename: AGENTS.md
-  persistence: persistent
-  entrypoint:
-    run: ["hermes"]
+  Mixin on top of the built-in `shell` agent. Installs Hermes and points
+  its web search at a host-side Presidio + Firecrawl proxy. LLM credentials
+  (anthropic, openai, openrouter) are already proxy-managed by `shell` — we
+  only add Hermes-specific config here.
 
 network:
-  serviceDomains:
-    api.anthropic.com: anthropic
-    api.openai.com: openai
-    openrouter.ai: openrouter
-  serviceAuth:
-    anthropic:
-      headerName: x-api-key
-      valueFormat: "%s"
-    openai:
-      headerName: Authorization
-      valueFormat: "Bearer %s"
-    openrouter:
-      headerName: Authorization
-      valueFormat: "Bearer %s"
   allowedDomains:
-    # Sanitizer proxy on host (5050 to avoid macOS AirPlay on 5000).
-    - "host.docker.internal:5050"
-    - "api.anthropic.com:443"
-    - "api.openai.com:443"
-    - "openrouter.ai:443"
-    # Nous Portal OAuth (token lives in sandbox, weaker than serviceAuth).
-    - "portal.nousresearch.com:443"
-    - "inference-api.nousresearch.com:443"
-    # Install-time only.
-    - "raw.githubusercontent.com:443"
-    - "github.com:443"
-    - "codeload.github.com:443"
-    - "objects.githubusercontent.com:443"
-    - "api.github.com:443"
-    - "astral.sh:443"
-    - "pypi.org:443"
-    - "files.pythonhosted.org:443"
-    - "deb.debian.org:80"
-    - "security.debian.org:80"
-
-credentials:
-  sources:
-    anthropic:
-      env: [ANTHROPIC_API_KEY]
-    openai:
-      env: [OPENAI_API_KEY]
-    openrouter:
-      env: [OPENROUTER_API_KEY]
+    - 'host.docker.internal:5050'
+    - 'localhost:5050'
+    - 'portal.nousresearch.com:443'
+    - 'inference-api.nousresearch.com:443'
+    - 'raw.githubusercontent.com:443'
+    - 'github.com:443'
+    - 'codeload.github.com:443'
+    - 'objects.githubusercontent.com:443'
+    - 'api.github.com:443'
+    - 'astral.sh:443'
+    - 'pypi.org:443'
+    - 'files.pythonhosted.org:443'
+    - 'deb.debian.org:80'
+    - 'security.debian.org:80'
 
 environment:
   variables:
-    FIRECRAWL_API_URL: "http://host.docker.internal:5050"
-  proxyManaged:
-    - ANTHROPIC_API_KEY
-    - OPENAI_API_KEY
-    - OPENROUTER_API_KEY
-    - FIRECRAWL_API_KEY
+    FIRECRAWL_API_URL: 'http://host.docker.internal:5050'
 
 commands:
   install:
-    - command: "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"
-      user: "1000"
+    - command: 'curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash'
+      user: '1000'
       description: Install NousResearch Hermes Agent
-
-memory: |
-  ## Sandbox
-  Default-deny sbx microVM. Only domains in the kit are reachable.
-
-  ## Web search
-  `web_search` / `web_extract` / `web_crawl` hit `$FIRECRAWL_API_URL`
-  (`http://host.docker.internal:5050`), a Presidio scrubber in front of
-  self-hosted Firecrawl. PII, API keys, and credit cards are redacted
-  before leaving the box.
-
-  ## Credentials
-  `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, and
-  `FIRECRAWL_API_KEY` read `proxy-managed`. That's correct — the host
-  sbx proxy rewrites the auth header on outbound requests. Don't try to
-  "fix" them. If a model call 401s, tell the user to
-  `sbx secret set -g <provider>` on the host.
-
-  Nous Portal uses OAuth via `hermes setup`; that token lives in the
-  sandbox volume.
-
-  ## Workspace
-  Your cwd is the host's `HermesWorkspace/` (bind-mounted).
-
-  ## Blocked domains
-  Don't try to bypass the policy. Tell the user the domain so they can
-  allow it via `sbx policy allow network` or the sbx TUI.

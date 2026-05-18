@@ -130,20 +130,33 @@ fi
 
 cat <<EOF
 
-${BLD}Now launching the Hermes sandbox.${RST}
+${BLD}Now launching the sandbox (shell agent + Hermes mixin).${RST}
 ${DIM}Inside the sandbox:${RST}
-  - The env vars ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY /
-    FIRECRAWL_API_KEY all read ${BLD}proxy-managed${RST}. That is correct.
-    The real values stay on your host and are injected by the sbx proxy.
-  - Web search is already wired through the sanitizer proxy via
+  - You land at a bash prompt. Type ${BLD}hermes${RST} to start the agent.
+  - ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / FIRECRAWL_API_KEY
+    all read ${BLD}proxy-managed${RST} — that is correct. The real values stay
+    on your host and are injected by the sbx credential proxy.
+  - Web search is wired through the sanitizer proxy via
     ${BLD}FIRECRAWL_API_URL=http://host.docker.internal:5050${RST}.
-  - If you'd rather OAuth into Nous Portal from inside the VM, run
-    ${BLD}hermes setup${RST} and pick Nous Portal.
+  - For OAuth instead of host-side keys, run ${BLD}hermes setup${RST} and pick
+    Nous Portal.
 
-${DIM}From another terminal you can watch redaction events with:${RST}
-  ${BLD}${DC[*]} logs -f sanitizer-proxy${RST}
+${DIM}Restart later with:${RST} ${BLD}sbx start secure-hermes${RST} (or the sbx TUI, or ./setup.sh)
+${DIM}Tail redaction events with:${RST} ${BLD}${DC[*]} logs -f sanitizer-proxy${RST}
 
 EOF
 
 cd "$WORKSPACE"
-exec sbx run --kit "$KIT_PATH" hermes
+# Kit is `kind: mixin` layered on top of the built-in `shell` agent.
+# Positional arg = built-in agent type (`shell`), NOT the mixin name.
+# Default sandbox name is `shell-<workdir>`; we pin it so restarts via
+# `sbx start` / TUI are unambiguous and don't collide with other
+# shell-based sandboxes the user may have.
+SANDBOX_NAME="secure-hermes"
+
+if sbx ls 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$SANDBOX_NAME"; then
+  ok "Sandbox '$SANDBOX_NAME' exists — attaching (preserves Hermes memory and installed deps)."
+  exec sbx start "$SANDBOX_NAME"
+else
+  exec sbx run --name "$SANDBOX_NAME" --kit "$KIT_PATH" shell
+fi

@@ -57,11 +57,30 @@ cd secure-hermes-sandbox
 ./setup.sh
 ```
 
-`setup.sh` brings up the backend (Presidio + Firecrawl + sanitizer), waits for it to be healthy, then `sbx run --kit ./sandbox hermes` mounted on `HermesWorkspace/`. Hermes' `FIRECRAWL_API_URL` is already pointed at the sanitizer in the kit — there's nothing to configure inside the sandbox to make web search safe.
+`setup.sh` brings up the backend (Presidio + Firecrawl + sanitizer), waits for it to be healthy, then runs:
+
+```sh
+sbx run --name secure-hermes --kit ./sandbox shell
+```
+
+The kit is a [mixin](https://docs.docker.com/ai/sandboxes/customize/kit-examples/) (`kind: mixin`) layered on top of the built-in `shell` agent. The mixin only contributes Hermes-specific bits: the install command, `FIRECRAWL_API_URL`, and the extra `allowedDomains` (sanitizer proxy + Nous Portal + install-time CDNs). LLM credentials (`anthropic`, `openai`, `openrouter`) are already wired by the `shell` base, so the mixin doesn't redeclare them. The base agent stays `shell`, which is what makes `sbx start` and the TUI work cleanly for restart — sbx restart paths only know about built-in agent types.
+
+Inside the sandbox you land at a bash prompt. Type `hermes` to start the agent. Web search, env vars, and provider credentials are already wired through the mixin — there's nothing to configure on the inside.
+
+### Restarting
+
+Any of these work:
+
+```sh
+sbx start secure-hermes      # CLI
+./setup.sh                   # idempotent: detects the existing sandbox and `sbx start`s it
+```
+
+…or open `sbx` (the TUI), find `secure-hermes`, hit `enter`. All three preserve the persistent volume (Hermes' memory, installed deps, OAuth tokens).
 
 ## Provider credentials — set them on the HOST, not in the sandbox
 
-This is the secure path. The kit declares three providers (`anthropic`, `openai`, `openrouter`); pick whichever you want to use and run one of:
+This is the secure path. The `shell` base agent has built-in credential wiring for the major providers (`anthropic`, `openai`, `openrouter`, and others — see the [Docker credentials docs](https://docs.docker.com/ai/sandboxes/security/credentials/)). Pick whichever you want to use and run one of:
 
 ```sh
 sbx secret set -g anthropic     # prompts for the value
@@ -106,18 +125,18 @@ If you need to change something **without losing memory**, pick the lightest opt
 2. **Layer a full kit change onto the running sandbox.** When you've edited `spec.yaml` (added install commands, env vars, static files, etc.) and want the changes applied without recreating, run:
 
    ```sh
-   sbx kit add <sandbox-name> ./sandbox
+   sbx kit add secure-hermes ./sandbox
    ```
 
-   This re-runs install commands and re-copies static files. Caveat: `serviceDomains`, `serviceAuth`, and `credentials.sources` are part of the kit's network/credential model — if you're adding **proxy-managed credential injection** for a brand-new provider, the cleanest way to be sure it takes effect is still a fresh sandbox (options 3 or 4 below). For pure `allowedDomains` additions, option 1 above is enough.
+   This re-runs install commands and re-copies static files. Caveat: network/credential changes interact with the base agent's wiring — for `allowedDomains` additions option 1 above is enough; for anything else, a fresh sandbox (options 3 or 4 below) is the cleanest path.
 
 3. **Snapshot, then recreate.** Save the configured sandbox as a template image, remove the sandbox, and start a fresh one from the saved template (also re-applies the kit on top):
 
    ```sh
-   sbx stop <sandbox-name>
-   sbx template save <sandbox-name> hermes-state:v1
-   sbx rm <sandbox-name>
-   sbx run --template hermes-state:v1 --kit ./sandbox hermes
+   sbx stop secure-hermes
+   sbx template save secure-hermes hermes-state:v1
+   sbx rm secure-hermes
+   sbx run --name secure-hermes --template hermes-state:v1 --kit ./sandbox shell
    ```
 
 4. **Copy memory out and back.** One-shot escape hatch when you don't want a template:
@@ -145,29 +164,20 @@ Trade-off: OAuth means a token sits in the sandbox filesystem. The `sbx secret s
 
 ## Adding another provider
 
-The kit ships with Anthropic / OpenAI / OpenRouter / Nous Portal. To add another (Groq, Mistral, Google, etc.) you have two paths depending on how much credential isolation you want:
-
-### Quick path (key lives inside the sandbox)
-
-Best when you just want to try a provider and don't mind pasting the key into Hermes:
+The `shell` base agent supports the built-in service identifiers listed in the [Docker credentials docs](https://docs.docker.com/ai/sandboxes/security/credentials/) (`anthropic`, `openai`, `openrouter`, `groq`, `mistral`, `google`, `nebius`, `xai`, `github`, `aws`). For any of those, the secure path is:
 
 ```sh
-sbx policy allow network -g api.groq.com:443     # or the host you need
+sbx secret set -g <provider>       # e.g. groq
+sbx rm secure-hermes && ./setup.sh # recreate so the new secret is picked up
 ```
 
-Then inside the sandbox, `hermes setup` (or `hermes config set GROQ_API_KEY ...`) writes the key to `~/.hermes/.env`. No kit edit, no recreate. The key now lives in the sandbox volume — fine for development, but it's the weaker of the two threat models.
+For a provider that isn't in that built-in list, or if you want to add a one-off host without a credential, the quick path is to allow the domain at runtime and let Hermes read the key from `~/.hermes/.env`:
 
-### Secure path (key stays on the host)
+```sh
+sbx policy allow network -g api.example.com:443
+```
 
-When you want the proxy to inject the credential so the agent never sees it:
-
-1. Add the API host to `sandbox/spec.yaml` → `allowedDomains`.
-2. Add a `serviceDomains` mapping and a `serviceAuth` block (header + value format) for that provider.
-3. Add a `credentials.sources` entry pointing at the host env var Hermes uses for that provider (see the [Hermes env var reference](https://hermes-agent.nousresearch.com/docs/reference/environment-variables/)).
-4. Add the env var name to `environment.proxyManaged`.
-5. `sbx secret set -g <your-service-id>`, then recreate the sandbox so the new `serviceDomains` / `credentials.sources` wiring takes effect. See [What survives a sandbox recreate](#what-survives-a-sandbox-recreate) for how to keep Hermes' memory across the recreate.
-
-The [Docker credentials docs](https://docs.docker.com/ai/sandboxes/security/credentials/) list built-in service identifiers you can re-use (`anthropic`, `openai`, `groq`, `mistral`, `google`, `nebius`, `xai`, `github`, `aws`).
+(Inside the sandbox, then run `hermes setup` or `hermes config set ...`. The key lives in the sandbox volume rather than your host keychain — fine for dev, weaker isolation.)
 
 ## Observing redactions
 
@@ -219,7 +229,7 @@ secure-hermes-sandbox/
 ├── .env.example                # Host-side env template (not for LLM keys)
 ├── README.md
 ├── sandbox/
-│   └── spec.yaml               # sbx agent kit (kit-only, no Dockerfile)
+│   └── spec.yaml               # sbx mixin (kind: mixin) layered on `shell`
 ├── sanitizer_proxy/            # Firecrawl-shaped Flask proxy
 │   ├── Dockerfile
 │   ├── requirements.txt
