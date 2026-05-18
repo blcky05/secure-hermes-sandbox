@@ -1,0 +1,172 @@
+name: secure-hermes-sandbox
+
+# Backend services for the Hermes sandbox. The sandbox itself runs separately
+# inside `sbx` (microVM) and reaches the sanitizer-proxy via host.docker.internal:5000.
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+    compress: "true"
+
+services:
+  presidio-analyzer:
+    image: mcr.microsoft.com/presidio-analyzer:latest
+    container_name: secure-hermes-presidio-analyzer
+    networks: [secure-search-net]
+    ports:
+      - "5001:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    logging: *default-logging
+
+  presidio-anonymizer:
+    image: mcr.microsoft.com/presidio-anonymizer:latest
+    container_name: secure-hermes-presidio-anonymizer
+    networks: [secure-search-net]
+    ports:
+      - "5002:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+    logging: *default-logging
+
+  firecrawl-redis:
+    image: redis:alpine
+    container_name: secure-hermes-firecrawl-redis
+    networks: [secure-search-net]
+    command: redis-server --bind 0.0.0.0
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging: *default-logging
+
+  firecrawl-rabbitmq:
+    image: rabbitmq:3-management
+    container_name: secure-hermes-firecrawl-rabbitmq
+    networks: [secure-search-net]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    logging: *default-logging
+
+  firecrawl-postgres:
+    image: ghcr.io/firecrawl/nuq-postgres:latest
+    container_name: secure-hermes-firecrawl-postgres
+    networks: [secure-search-net]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    logging: *default-logging
+
+  firecrawl-playwright:
+    image: ghcr.io/firecrawl/playwright-service:latest
+    container_name: secure-hermes-firecrawl-playwright
+    networks: [secure-search-net]
+    environment:
+      PORT: "3000"
+      MAX_CONCURRENT_PAGES: "10"
+    logging: *default-logging
+
+  firecrawl:
+    image: ghcr.io/firecrawl/firecrawl:latest
+    container_name: secure-hermes-firecrawl
+    networks: [secure-search-net]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "3002"
+      INTERNAL_PORT: "3002"
+      EXTRACT_WORKER_PORT: "3004"
+      WORKER_PORT: "3005"
+      ENV: local
+      REDIS_URL: "redis://firecrawl-redis:6379"
+      REDIS_RATE_LIMIT_URL: "redis://firecrawl-redis:6379"
+      PLAYWRIGHT_MICROSERVICE_URL: "http://firecrawl-playwright:3000/scrape"
+      NUQ_RABBITMQ_URL: "amqp://firecrawl-rabbitmq:5672"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: "postgres"
+      POSTGRES_HOST: "firecrawl-postgres"
+      POSTGRES_PORT: "5432"
+      USE_DB_AUTHENTICATION: "false"
+      NUM_WORKERS_PER_QUEUE: "8"
+      CRAWL_CONCURRENT_REQUESTS: "10"
+      MAX_CONCURRENT_JOBS: "5"
+      BROWSER_POOL_SIZE: "5"
+      LOGGING_LEVEL: ${LOGGING_LEVEL:-info}
+      SEARXNG_ENDPOINT: ${SEARXNG_ENDPOINT:-}
+      SEARXNG_ENGINES: ${SEARXNG_ENGINES:-}
+      SEARXNG_CATEGORIES: ${SEARXNG_CATEGORIES:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      MODEL_NAME: ${MODEL_NAME:-}
+      MODEL_EMBEDDING_NAME: ${MODEL_EMBEDDING_NAME:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+      PROXY_SERVER: ${PROXY_SERVER:-}
+      PROXY_USERNAME: ${PROXY_USERNAME:-}
+      PROXY_PASSWORD: ${PROXY_PASSWORD:-}
+    depends_on:
+      firecrawl-redis:
+        condition: service_started
+      firecrawl-playwright:
+        condition: service_started
+      firecrawl-rabbitmq:
+        condition: service_healthy
+      firecrawl-postgres:
+        condition: service_started
+    ports:
+      - "3002:3002"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    logging: *default-logging
+
+  sanitizer-proxy:
+    build: ./sanitizer_proxy
+    container_name: secure-hermes-sanitizer-proxy
+    networks: [secure-search-net]
+    environment:
+      PRESIDIO_ANALYZER_URL: "http://presidio-analyzer:3000"
+      PRESIDIO_ANONYMIZER_URL: "http://presidio-anonymizer:3000"
+      FIRECRAWL_URL: "http://firecrawl:3002"
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+      REQUEST_TIMEOUT_SECONDS: "30"
+      LOG_LEVEL: "INFO"
+    ports:
+      - "5000:5000"
+    depends_on:
+      presidio-analyzer:
+        condition: service_started
+      presidio-anonymizer:
+        condition: service_started
+      firecrawl:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/health',timeout=2).status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    logging: *default-logging
+
+networks:
+  secure-search-net:
+    name: secure-search-net
+    driver: bridge
