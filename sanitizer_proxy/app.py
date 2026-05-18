@@ -1,23 +1,5 @@
-"""Sanitizer proxy in front of self-hosted Firecrawl.
-
-This service is a drop-in, Firecrawl-API-shaped reverse proxy. The Hermes
-agent inside the Docker sandbox is configured with
-``FIRECRAWL_API_URL=http://host.docker.internal:5000``; it therefore talks
-to this proxy as if it were Firecrawl. The proxy runs every text-bearing
-field through Microsoft Presidio (analyze + anonymize) and only then
-forwards the request to the real Firecrawl instance running on the
-``secure-search-net`` docker network.
-
-Endpoints implemented:
-
-* ``GET  /health``           — proxy liveness (used by setup.sh).
-* ``POST /v1/search``        — scrubs ``query``, forwards.
-* ``POST /v1/scrape``        — scrubs ``prompt`` if present, forwards.
-* ``POST /v1/extract``       — scrubs ``prompt`` if present, forwards.
-* ``POST /v1/crawl``         — scrubs ``prompt`` if present, forwards.
-* ``ANY  /v1/<path:rest>``   — generic JSON passthrough so status,
-                                cancellation, and other endpoints work.
-"""
+"""Firecrawl-shaped reverse proxy that scrubs text fields via Presidio
+before forwarding to a self-hosted Firecrawl instance."""
 
 from __future__ import annotations
 
@@ -91,10 +73,8 @@ ANONYMIZER_OPERATORS: dict[str, dict[str, Any]] = {
     "LOCATION": {"type": "replace", "new_value": "<LOCATION>"},
 }
 
-# Headers we never want to forward verbatim. The sandbox sees
-# ``FIRECRAWL_API_KEY=proxy-managed`` (the sbx credential-proxy sentinel),
-# which is meaningless to the real Firecrawl. Strip it and inject our own
-# host-side key if one was configured.
+# Drop Authorization (sandbox sends the `proxy-managed` sentinel) plus
+# the usual hop-by-hop set; the upstream gets our host-side key instead.
 HOP_BY_HOP_HEADERS = {
     "host",
     "connection",
@@ -153,7 +133,6 @@ def anonymize(text: str, analyzer_results: list[dict[str, Any]]) -> str:
 
 
 def scrub_field(body: dict[str, Any], field: str, *, where: str) -> None:
-    """Run a single text field through Presidio in-place and log findings."""
     original = body.get(field)
     if not isinstance(original, str) or not original.strip():
         return
@@ -241,11 +220,6 @@ def with_scrubbed_body(scrub_fields: list[str], *, where: str) -> Any:
     return forward("POST", f"/{where.lstrip('/')}", body=body)
 
 
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
-
-
 @app.get("/health")
 def health() -> Any:
     return jsonify({"status": "ok"}), 200
@@ -273,8 +247,6 @@ def v1_crawl() -> Any:
 
 @app.route("/v1/<path:subpath>", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 def v1_passthrough(subpath: str) -> Any:
-    # Status, cancellation, batch-status, etc. No text body worth scrubbing —
-    # forward unchanged so Firecrawl features that Hermes uses keep working.
     return forward(request.method, f"/v1/{subpath}")
 
 

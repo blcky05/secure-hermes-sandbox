@@ -1,8 +1,5 @@
 name: secure-hermes-sandbox
 
-# Backend services for the Hermes sandbox. The sandbox itself runs separately
-# inside `sbx` (microVM) and reaches the sanitizer-proxy via host.docker.internal:5000.
-
 x-logging: &default-logging
   driver: "json-file"
   options:
@@ -150,7 +147,8 @@ services:
       REQUEST_TIMEOUT_SECONDS: "30"
       LOG_LEVEL: "INFO"
     ports:
-      - "5000:5000"
+      # 5050 on host (macOS AirPlay binds 5000); container still on 5000.
+      - "5050:5000"
     depends_on:
       presidio-analyzer:
         condition: service_started

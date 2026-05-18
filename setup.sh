@@ -1,9 +1,5 @@
 #!/usr/bin/env zsh
-# Secure Hermes Sandbox — one-click setup.
-#
-# Brings up the backend stack (Presidio + Firecrawl + sanitizer proxy) via
-# docker compose, waits for it to be healthy, then launches the Hermes
-# agent inside a Docker Sandbox (sbx) microVM. Works under zsh and bash.
+# One-click setup: backend stack + Hermes sandbox.
 
 emulate -L sh 2>/dev/null || true
 set -euo pipefail
@@ -30,7 +26,6 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || abort "$2"
 }
 
-# ---------------------------------------------------------------------
 hdr "Preflight"
 
 require_cmd docker \
@@ -54,7 +49,6 @@ require_cmd sbx \
   "The 'sbx' CLI is not installed. Install it with: brew install docker/tap/sbx (then run: sbx login)"
 ok "sbx CLI available: $(sbx --version 2>/dev/null | head -n1 || echo unknown)"
 
-# ---------------------------------------------------------------------
 hdr "Workspace bootstrap"
 
 mkdir -p HermesWorkspace
@@ -69,7 +63,6 @@ else
   ok ".env already present (left untouched)"
 fi
 
-# ---------------------------------------------------------------------
 hdr "Backend services (Presidio + Firecrawl + sanitizer)"
 
 "${DC[@]}" up --build -d
@@ -91,20 +84,20 @@ poll_url() {
 }
 
 info "Waiting for the sanitizer proxy to become healthy..."
-if ! poll_url "http://localhost:5000/health" 60 "sanitizer-proxy"; then
+if ! poll_url "http://localhost:5050/health" 60 "sanitizer-proxy"; then
   err "sanitizer-proxy never became healthy. Last 50 log lines:"
   "${DC[@]}" logs --tail 50 sanitizer-proxy || true
   exit 1
 fi
 
 info "Waiting for Firecrawl (best-effort; first boot takes ~30-60s)..."
-if ! poll_url "http://localhost:3002/v1/health" 60 "firecrawl"; then
+# Firecrawl has no /health route; the root `/` returns 200 once the API is ready.
+if ! poll_url "http://localhost:3002/" 60 "firecrawl"; then
   warn "Firecrawl health check did not pass within 120s."
   warn "The sandbox will still launch; searches may fail until Firecrawl is up."
   warn "Tail logs with: ${DC[*]} logs -f firecrawl"
 fi
 
-# ---------------------------------------------------------------------
 hdr "Launch Hermes sandbox"
 
 KIT_PATH="$SCRIPT_DIR/sandbox"
@@ -143,7 +136,7 @@ ${DIM}Inside the sandbox:${RST}
     FIRECRAWL_API_KEY all read ${BLD}proxy-managed${RST}. That is correct.
     The real values stay on your host and are injected by the sbx proxy.
   - Web search is already wired through the sanitizer proxy via
-    ${BLD}FIRECRAWL_API_URL=http://host.docker.internal:5000${RST}.
+    ${BLD}FIRECRAWL_API_URL=http://host.docker.internal:5050${RST}.
   - If you'd rather OAuth into Nous Portal from inside the VM, run
     ${BLD}hermes setup${RST} and pick Nous Portal.
 

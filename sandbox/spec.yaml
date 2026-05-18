@@ -3,10 +3,9 @@ kind: agent
 name: hermes
 displayName: Hermes (Secure Sandbox)
 description: >-
-  NousResearch Hermes Agent running in a Docker microVM. Web search is
-  forced through a local PII-scrubbing proxy that fronts a self-hosted
-  Firecrawl. LLM-provider credentials never enter the VM — the host-side
-  sbx credential proxy injects them on outbound requests.
+  NousResearch Hermes in a sbx microVM. Web search is routed through a
+  local Presidio scrubber to self-hosted Firecrawl; LLM-provider keys
+  stay on the host and are injected by the sbx credential proxy.
 
 agent:
   image: "docker/sandbox-templates:shell-docker"
@@ -16,10 +15,6 @@ agent:
     run: ["hermes"]
 
 network:
-  # Each entry below ties a domain to a service identifier. When the agent
-  # makes a request to one of these domains, the sbx host-side proxy reads
-  # the matching credential (see `credentials.sources` below) and rewrites
-  # the auth header on the way out. The real secret never enters the VM.
   serviceDomains:
     api.anthropic.com: anthropic
     api.openai.com: openai
@@ -34,26 +29,16 @@ network:
     openrouter:
       headerName: Authorization
       valueFormat: "Bearer %s"
-
-  # Default-deny network policy. Only the hosts below are reachable.
   allowedDomains:
-    # --- Web search/scrape/extract via the local sanitizer proxy --------
-    - "host.docker.internal:5000"
-
-    # --- LLM providers (the proxy injects creds for these) -------------
+    # Sanitizer proxy on host (5050 to avoid macOS AirPlay on 5000).
+    - "host.docker.internal:5050"
     - "api.anthropic.com:443"
     - "api.openai.com:443"
     - "openrouter.ai:443"
-
-    # --- Nous Portal (Hermes' native OAuth flow) -----------------------
-    # Hermes' `hermes setup` opens an OAuth flow against Nous Portal. The
-    # token is short-lived and re-minted by Hermes; it lives only inside
-    # the sandbox volume. If you'd rather not run OAuth from inside the
-    # VM, comment these out and use one of the providers above.
+    # Nous Portal OAuth (token lives in sandbox, weaker than serviceAuth).
     - "portal.nousresearch.com:443"
     - "inference-api.nousresearch.com:443"
-
-    # --- Install-time domains ------------------------------------------
+    # Install-time only.
     - "raw.githubusercontent.com:443"
     - "github.com:443"
     - "codeload.github.com:443"
@@ -66,9 +51,6 @@ network:
     - "security.debian.org:80"
 
 credentials:
-  # The proxy reads these on the HOST, never inside the sandbox. The user
-  # provides values with `sbx secret set -g <service>` (preferred) or by
-  # exporting the env var on the host shell before launching the sandbox.
   sources:
     anthropic:
       env: [ANTHROPIC_API_KEY]
@@ -79,22 +61,11 @@ credentials:
 
 environment:
   variables:
-    # Point Hermes' built-in Firecrawl backend at our sanitizer proxy.
-    # No custom search tool is needed; Hermes' web_search / web_extract
-    # already hit ${FIRECRAWL_API_URL}/v1/search and friends, and the
-    # proxy answers with the same API shape.
-    FIRECRAWL_API_URL: "http://host.docker.internal:5000"
-
-  # Env vars listed here are set to a proxy-managed sentinel inside the
-  # sandbox. The agent code sees a non-empty string (so init checks pass)
-  # but the real secret only exists on the host.
+    FIRECRAWL_API_URL: "http://host.docker.internal:5050"
   proxyManaged:
     - ANTHROPIC_API_KEY
     - OPENAI_API_KEY
     - OPENROUTER_API_KEY
-    # Our self-hosted Firecrawl runs without auth, but Hermes expects
-    # FIRECRAWL_API_KEY to be set. Letting the proxy populate it with the
-    # sentinel value satisfies Hermes without leaking anything real.
     - FIRECRAWL_API_KEY
 
 commands:
@@ -104,50 +75,28 @@ commands:
       description: Install NousResearch Hermes Agent
 
 memory: |
-  ## Sandbox environment
+  ## Sandbox
+  Default-deny sbx microVM. Only domains in the kit are reachable.
 
-  You are running inside a Docker microVM (Docker Sandbox / `sbx`) with a
-  strict default-deny network policy. Only the domains listed in the kit
-  are reachable; everything else is dropped at the host-side proxy.
+  ## Web search
+  `web_search` / `web_extract` / `web_crawl` hit `$FIRECRAWL_API_URL`
+  (`http://host.docker.internal:5050`), a Presidio scrubber in front of
+  self-hosted Firecrawl. PII, API keys, and credit cards are redacted
+  before leaving the box.
 
-  ## Web search is sanitized
-
-  Your `web_search`, `web_extract`, and `web_crawl` tools talk to
-  `$FIRECRAWL_API_URL`, which is set to `http://host.docker.internal:5000`.
-  That endpoint is **not** Firecrawl directly — it is a Microsoft Presidio
-  redaction proxy that scrubs PII, API keys, and credit card numbers
-  from outbound search queries before forwarding to a self-hosted
-  Firecrawl. You can rely on this safety net, but you should still avoid
-  placing user secrets into queries when you can avoid it.
-
-  ## LLM provider credentials
-
-  Your provider API keys are NOT inside this sandbox. The variables
+  ## Credentials
   `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, and
-  `FIRECRAWL_API_KEY` are set to the literal string `proxy-managed`. That
-  is intentional: the sbx host-side proxy rewrites the auth header with
-  the real secret on the way out. Do not print these values or try to
-  "fix" them — they are correct as-is.
+  `FIRECRAWL_API_KEY` read `proxy-managed`. That's correct — the host
+  sbx proxy rewrites the auth header on outbound requests. Don't try to
+  "fix" them. If a model call 401s, tell the user to
+  `sbx secret set -g <provider>` on the host.
 
-  If a model call fails because no credential is configured, exit and
-  ask the user to run `sbx secret set -g <provider>` on the host.
-
-  ## Nous Portal OAuth (optional)
-
-  If the user chooses Nous Portal, `hermes setup` will run an OAuth flow
-  to `portal.nousresearch.com`. That token lives inside `~/.hermes/` in
-  the sandbox volume (persistent across restarts) — less secure than the
-  proxy-managed flow above but it's how Nous Portal works today.
+  Nous Portal uses OAuth via `hermes setup`; that token lives in the
+  sandbox volume.
 
   ## Workspace
+  Your cwd is the host's `HermesWorkspace/` (bind-mounted).
 
-  User files live at the current working directory (the host's
-  `HermesWorkspace/` is mounted here). Anything you write there shows up
-  on the host immediately and vice versa.
-
-  ## Adding domains
-
-  If you need a host that isn't on the allow-list, do NOT try to bypass
-  the policy. Stop, tell the user the domain, and ask them to add it to
-  `sandbox/spec.yaml` → `network.allowedDomains` and re-create the
-  sandbox.
+  ## Blocked domains
+  Don't try to bypass the policy. Tell the user the domain so they can
+  allow it via `sbx policy allow network` or the sbx TUI.
