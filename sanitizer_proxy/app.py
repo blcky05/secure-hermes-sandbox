@@ -264,9 +264,9 @@ def health() -> Any:
 # clients default to v2. Both are scrubbed the same way.
 SCRUBBED_ROUTES: dict[str, list[str]] = {
     "search": ["query"],
-    "scrape": ["prompt"],
-    "extract": ["prompt"],
-    "crawl": ["prompt"],
+    "scrape": ["url", "prompt"],
+    "extract": ["urls", "prompt"],
+    "crawl": ["url", "prompt"],
 }
 
 
