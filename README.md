@@ -63,7 +63,7 @@ cd secure-hermes-sandbox
 sbx run --name secure-hermes --kit ./sandbox shell
 ```
 
-The kit is a [mixin](https://docs.docker.com/ai/sandboxes/customize/kit-examples/) (`kind: mixin`) layered on top of the built-in `shell` agent. The mixin only contributes Hermes-specific bits: the install command, `FIRECRAWL_API_URL`, and the extra `allowedDomains` (sanitizer proxy + Nous Portal + install-time CDNs). LLM credentials (`anthropic`, `openai`, `openrouter`) are already wired by the `shell` base, so the mixin doesn't redeclare them. The base agent stays `shell`, which is what makes `sbx start` and the TUI work cleanly for restart — sbx restart paths only know about built-in agent types.
+The kit is a [mixin](https://docs.docker.com/ai/sandboxes/customize/kit-examples/) (`kind: mixin`) layered on top of the built-in `shell` agent. The mixin only contributes Hermes-specific bits: the install command, `FIRECRAWL_API_URL`, the extra `allowedDomains` (sanitizer proxy + Nous Portal + install-time CDNs), and a one-shot post-install step that pins Hermes' [`terminal.backend`](https://hermes-agent.nousresearch.com/docs/user-guide/configuration) to `local`. We don't want Hermes spinning up a nested Docker container for tool calls — the sbx microVM is already the sandbox boundary. LLM credentials (`anthropic`, `openai`, `openrouter`) are already wired by the `shell` base, so the mixin doesn't redeclare them. The base agent stays `shell`, which is what makes `sbx start` and the TUI work cleanly for restart — sbx restart paths only know about built-in agent types.
 
 Inside the sandbox you land at a bash prompt. Type `hermes` to start the agent. Web search, env vars, and provider credentials are already wired through the mixin — there's nothing to configure on the inside.
 
@@ -103,14 +103,14 @@ sbx secret rm -g openrouter
 
 Per the [Docker Sandboxes usage docs](https://docs.docker.com/ai/sandboxes/usage/#what-persists), `sbx rm` deletes the entire microVM and everything inside it. `persistence: persistent` in the kit only keeps state across `sbx stop` / `sbx start` of the **same** sandbox, not across `sbx rm`.
 
-| Survives `sbx rm`? | What | Where |
-| --- | --- | --- |
-| Yes | Files you dropped in `HermesWorkspace/` | Host bind mount |
-| Yes | Host secrets stored via `sbx secret set` | macOS keychain |
-| Yes | Backend stack data (Firecrawl indexes, redis, etc.) | Docker named volumes managed by `docker-compose.yml` |
-| **No** | Hermes' memory, auto-created skills, conversation history | `~/.hermes/` inside the sandbox volume |
-| **No** | Nous Portal OAuth token (if you used `hermes setup` instead of `sbx secret set`) | `~/.hermes/` inside the sandbox volume |
-| **No** | Anything else under `/home/agent/` outside the workspace bind | Sandbox volume |
+| Survives `sbx rm`? | What                                                                             | Where                                                |
+| ------------------ | -------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Yes                | Files you dropped in `HermesWorkspace/`                                          | Host bind mount                                      |
+| Yes                | Host secrets stored via `sbx secret set`                                         | macOS keychain                                       |
+| Yes                | Backend stack data (Firecrawl indexes, redis, etc.)                              | Docker named volumes managed by `docker-compose.yml` |
+| **No**             | Hermes' memory, auto-created skills, conversation history                        | `~/.hermes/` inside the sandbox volume               |
+| **No**             | Nous Portal OAuth token (if you used `hermes setup` instead of `sbx secret set`) | `~/.hermes/` inside the sandbox volume               |
+| **No**             | Anything else under `/home/agent/` outside the workspace bind                    | Sandbox volume                                       |
 
 If you need to change something **without losing memory**, pick the lightest option that fits your change:
 
@@ -211,14 +211,14 @@ docker compose down -v # also delete Firecrawl/redis/rabbitmq/postgres volumes
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-| --- | --- | --- |
-| `sbx: command not found` | `sbx` CLI not installed | `brew install docker/tap/sbx` |
-| LLM call returns 401 / auth error | No credential stored for the provider you're using | `sbx secret set -g <service>` then recreate the sandbox |
-| LLM call hangs or times out | Provider domain not on `allowedDomains` | Check `sbx policy log`; add domain to `sandbox/spec.yaml` |
-| Hermes searches fail | Sanitizer proxy not healthy | `docker compose logs sanitizer-proxy` |
-| Firecrawl `/v1/search` returns no results | Default backend (Google) blocked or rate-limited | Run a local SearXNG and set `SEARXNG_ENDPOINT` in `.env`, then restart `firecrawl` |
-| Redaction not logged | Query contained nothing Presidio recognises | Try `sk-AAAAAAAAAAAAAAAAAAAA` or `4242 4242 4242 4242` |
+| Symptom                                   | Likely cause                                       | Fix                                                                                |
+| ----------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `sbx: command not found`                  | `sbx` CLI not installed                            | `brew install docker/tap/sbx`                                                      |
+| LLM call returns 401 / auth error         | No credential stored for the provider you're using | `sbx secret set -g <service>` then recreate the sandbox                            |
+| LLM call hangs or times out               | Provider domain not on `allowedDomains`            | Check `sbx policy log`; add domain to `sandbox/spec.yaml`                          |
+| Hermes searches fail                      | Sanitizer proxy not healthy                        | `docker compose logs sanitizer-proxy`                                              |
+| Firecrawl `/v1/search` returns no results | Default backend (Google) blocked or rate-limited   | Run a local SearXNG and set `SEARXNG_ENDPOINT` in `.env`, then restart `firecrawl` |
+| Redaction not logged                      | Query contained nothing Presidio recognises        | Try `sk-AAAAAAAAAAAAAAAAAAAA` or `4242 4242 4242 4242`                             |
 
 ## Repository layout
 

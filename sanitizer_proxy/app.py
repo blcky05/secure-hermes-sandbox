@@ -132,29 +132,55 @@ def anonymize(text: str, analyzer_results: list[dict[str, Any]]) -> str:
     return redacted
 
 
-def scrub_field(body: dict[str, Any], field: str, *, where: str) -> None:
-    original = body.get(field)
-    if not isinstance(original, str) or not original.strip():
-        return
+def _scrub_str(original: str, *, endpoint: str, field: str) -> str:
     analyzer_results = analyze(original)
-    redacted = anonymize(original, analyzer_results)
     findings = [
         {"entity_type": r.get("entity_type"), "score": r.get("score")}
         for r in analyzer_results
     ]
-    if findings:
-        log.warning(
-            "PII REDACTED before Firecrawl. endpoint=%s field=%s findings=%s "
-            "| original=%r | scrubbed=%r",
+    if not findings:
+        log.info(
+            "scan endpoint=%s field=%s len=%d findings=none",
+            endpoint,
+            field,
+            len(original),
+        )
+        return original
+    redacted = anonymize(original, analyzer_results)
+    log.warning(
+        "PII REDACTED before Firecrawl. endpoint=%s field=%s findings=%s "
+        "| original=%r | scrubbed=%r",
+        endpoint,
+        field,
+        findings,
+        original,
+        redacted,
+    )
+    return redacted
+
+
+def scrub_field(body: dict[str, Any], field: str, *, where: str) -> None:
+    value = body.get(field)
+    if isinstance(value, str):
+        if value.strip():
+            body[field] = _scrub_str(value, endpoint=where, field=field)
+    elif isinstance(value, list):
+        new_list: list[Any] = []
+        for i, item in enumerate(value):
+            if isinstance(item, str) and item.strip():
+                new_list.append(_scrub_str(item, endpoint=where, field=f"{field}[{i}]"))
+            else:
+                new_list.append(item)
+        body[field] = new_list
+    elif value is None:
+        log.debug("skip endpoint=%s field=%s reason=absent", where, field)
+    else:
+        log.debug(
+            "skip endpoint=%s field=%s reason=unsupported_type type=%s",
             where,
             field,
-            findings,
-            original,
-            redacted,
+            type(value).__name__,
         )
-        body[field] = redacted
-    else:
-        log.info("No PII in %s.%s — forwarding as-is", where, field)
 
 
 def upstream_headers() -> dict[str, str]:
@@ -207,6 +233,15 @@ def with_scrubbed_body(scrub_fields: list[str], *, where: str) -> Any:
     if not isinstance(body, dict):
         return jsonify({"error": "request body must be a JSON object"}), 400
 
+    present = [f for f in scrub_fields if f in body]
+    log.info(
+        "intake endpoint=%s fields_to_scan=%s present=%s body_keys=%s",
+        where,
+        scrub_fields,
+        present,
+        sorted(body.keys()),
+    )
+
     try:
         for field in scrub_fields:
             scrub_field(body, field, where=where)
@@ -225,29 +260,38 @@ def health() -> Any:
     return jsonify({"status": "ok"}), 200
 
 
-@app.post("/v1/search")
-def v1_search() -> Any:
-    return with_scrubbed_body(["query"], where="v1/search")
+# Firecrawl exposes the same shape under /v1 and /v2; current Hermes / SDK
+# clients default to v2. Both are scrubbed the same way.
+SCRUBBED_ROUTES: dict[str, list[str]] = {
+    "search": ["query"],
+    "scrape": ["prompt"],
+    "extract": ["prompt"],
+    "crawl": ["prompt"],
+}
 
 
-@app.post("/v1/scrape")
-def v1_scrape() -> Any:
-    return with_scrubbed_body(["prompt"], where="v1/scrape")
+def _register_scrubbed(version: str, endpoint: str, fields: list[str]) -> None:
+    path = f"/{version}/{endpoint}"
+
+    def handler(_fields: list[str] = fields, _where: str = f"{version}/{endpoint}") -> Any:
+        return with_scrubbed_body(_fields, where=_where)
+
+    app.add_url_rule(path, endpoint=f"{version}_{endpoint}", view_func=handler, methods=["POST"])
 
 
-@app.post("/v1/extract")
-def v1_extract() -> Any:
-    return with_scrubbed_body(["prompt"], where="v1/extract")
-
-
-@app.post("/v1/crawl")
-def v1_crawl() -> Any:
-    return with_scrubbed_body(["prompt"], where="v1/crawl")
+for _version in ("v1", "v2"):
+    for _endpoint, _fields in SCRUBBED_ROUTES.items():
+        _register_scrubbed(_version, _endpoint, _fields)
 
 
 @app.route("/v1/<path:subpath>", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 def v1_passthrough(subpath: str) -> Any:
     return forward(request.method, f"/v1/{subpath}")
+
+
+@app.route("/v2/<path:subpath>", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+def v2_passthrough(subpath: str) -> Any:
+    return forward(request.method, f"/v2/{subpath}")
 
 
 if __name__ == "__main__":

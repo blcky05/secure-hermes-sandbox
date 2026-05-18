@@ -34,3 +34,11 @@ commands:
     - command: 'curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash'
       user: '1000'
       description: Install NousResearch Hermes Agent
+    - command: |
+        mkdir -p /home/agent/.hermes
+        cat > /home/agent/.hermes/config.yaml <<'YAML'
+        terminal:
+          backend: local
+        YAML
+      user: '1000'
+      description: Pin Hermes terminal backend to local (the sbx microVM is the sandbox)
