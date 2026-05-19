@@ -90,6 +90,39 @@ Every redaction is logged with the original and scrubbed values so you can audit
 docker compose logs -f sanitizer-proxy
 ```
 
+## Network Policy
+
+Web search has its own dedicated path through the sanitizer proxy (above). Everything else — package managers, code hosts, AI provider APIs, OAuth — leaves the sandbox via sbx's HTTP/HTTPS policy proxy, with three allowlist layers composed together:
+
+1. **Host baseline** — chosen on first `sbx` run. The default _Balanced_ baseline pre-allows package managers (npm, PyPI, crates.io, …), code hosts (GitHub, GitLab, …), and major AI APIs so common workflows just work. _Open_ allows everything; _Locked Down_ denies everything not explicitly allowed. Reset with `sbx policy reset`.
+2. **Kit additions** — `sandbox/spec.yaml` → `network.allowedDomains`, applied at sandbox creation. Currently covers the sanitizer proxy and install-time mirrors (Nous Portal, GitHub, PyPI, Debian) so setup works under any baseline.
+3. **Host overrides** — `sbx policy allow/deny network`, layered at runtime, machine- or sandbox-scoped.
+
+Deny always beats allow. Inspect the effective policy with `sbx policy ls`; tail allowed/blocked requests with `sbx policy log`.
+
+To allow a new host **permanently**, add it to the kit and recreate the sandbox:
+
+```yaml
+# sandbox/spec.yaml
+network:
+  allowedDomains:
+    - 'example.com:443'
+    - '*.example.com:443' # *.foo does NOT match apex foo — list both if you need both
+```
+
+```sh
+sbx rm secure-hermes && ./setup.sh
+```
+
+To allow a new host **ad-hoc** (no recreation, scoped to this sandbox):
+
+```sh
+sbx policy allow network secure-hermes example.com:443
+sbx policy deny  network secure-hermes telemetry.example.com
+```
+
+Only HTTP/HTTPS go through the policy proxy. Raw TCP (e.g. SSH) can be allowed by IP:port (`sbx policy allow network -g 1.2.3.4:22`); UDP and ICMP are blocked at the kernel and cannot be unblocked.
+
 ## Endpoints
 
 - Sanitizer health: <http://localhost:5050/health>
