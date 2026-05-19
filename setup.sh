@@ -141,7 +141,7 @@ ${DIM}Inside the sandbox:${RST}
   - For OAuth instead of host-side keys, run ${BLD}hermes setup${RST} and pick
     Nous Portal.
 
-${DIM}Restart later with:${RST} ${BLD}sbx start secure-hermes${RST} (or the sbx TUI, or ./setup.sh)
+${DIM}Restart later with:${RST} ${BLD}sbx run secure-hermes${RST} (or the sbx TUI, or ./setup.sh)
 ${DIM}Tail redaction events with:${RST} ${BLD}${DC[*]} logs -f sanitizer-proxy${RST}
 
 EOF
@@ -149,14 +149,13 @@ EOF
 cd "$WORKSPACE"
 # Kit is `kind: mixin` layered on top of the built-in `shell` agent.
 # Positional arg = built-in agent type (`shell`), NOT the mixin name.
-# Default sandbox name is `shell-<workdir>`; we pin it so restarts via
-# `sbx start` / TUI are unambiguous and don't collide with other
-# shell-based sandboxes the user may have.
+# Default sandbox name is `shell-<workdir>`; we pin it to avoid collisions
+# with other shell-based sandboxes the user may have.
 SANDBOX_NAME="secure-hermes"
 
 if sbx ls 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$SANDBOX_NAME"; then
   ok "Sandbox '$SANDBOX_NAME' exists — attaching (preserves Hermes memory and installed deps)."
-  exec sbx start "$SANDBOX_NAME"
+  exec sbx run "$SANDBOX_NAME"
 else
   exec sbx run --name "$SANDBOX_NAME" --kit "$KIT_PATH" shell
 fi

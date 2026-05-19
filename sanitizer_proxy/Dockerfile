@@ -1,17 +1,25 @@
-FROM python:3.12-slim
-
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+FROM node:22-alpine AS build
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+COPY package*.json tsconfig.json ./
+RUN npm ci
 
-COPY app.py .
+COPY src ./src
+RUN npm run build
+
+FROM node:22-alpine
+
+ENV NODE_ENV=production \
+    PORT=5000
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+COPY --from=build /app/dist ./dist
 
 EXPOSE 5000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
+CMD ["node", "dist/server.js"]
