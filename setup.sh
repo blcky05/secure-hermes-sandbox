@@ -30,39 +30,66 @@ expand_path() {
   local raw="$1"
   case "$raw" in
     "~") raw="$HOME" ;;
-    "~/"*) raw="$HOME/${raw#~/}" ;;
+    "~/"*) raw="$HOME/${raw#\~/}" ;;  # \~ to defeat zsh tilde expansion inside ${#…}
   esac
   [[ "$raw" = /* ]] || raw="$SCRIPT_DIR/$raw"
   print -r -- "${raw:A}"
 }
 
 choose_workspace() {
-  local default_parent="$SCRIPT_DIR"
-  local input parent
+  local default_workspace="$HOME/secure-hermes-workspace"
+  local input candidate parent
+
+  if [ -n "${HERMES_WORKSPACE:-}" ]; then
+    candidate="$(expand_path "$HERMES_WORKSPACE")"
+    info "Using HERMES_WORKSPACE=$candidate"
+    WORKSPACE="$candidate"
+    return 0
+  fi
 
   while true; do
     if [ -t 0 ]; then
-      printf "HermesWorkspace parent directory [%s]: " "$default_parent"
+      printf "Workspace directory [%s]: " "$default_workspace"
       IFS= read -r input
     else
       input=""
     fi
 
-    [ -n "$input" ] || input="$default_parent"
-    parent="$(expand_path "$input")"
+    [ -n "$input" ] || input="$default_workspace"
+    candidate="$(expand_path "$input")"
+    parent="$(dirname "$candidate")"
 
     if [ ! -d "$parent" ]; then
-      err "Invalid workspace parent: '$parent' does not exist or is not a directory."
+      err "Parent directory '$parent' does not exist."
     elif [ ! -w "$parent" ]; then
-      err "Invalid workspace parent: '$parent' is not writable."
+      err "Parent directory '$parent' is not writable."
     else
-      WORKSPACE_PARENT="$parent"
-      WORKSPACE="$WORKSPACE_PARENT/HermesWorkspace"
+      WORKSPACE="$candidate"
       return 0
     fi
 
     [ -t 0 ] || exit 1
   done
+}
+
+seed_workspace() {
+  local src="$SCRIPT_DIR/workspace-template"
+  [ -d "$src" ] || return 0
+
+  local seeded=0 f rel dest
+  while IFS= read -r f; do
+    rel="${f#$src/}"
+    dest="$WORKSPACE/$rel"
+    if [ ! -e "$dest" ]; then
+      mkdir -p "$(dirname "$dest")"
+      cp "$f" "$dest"
+      seeded=$((seeded + 1))
+    fi
+  done < <(find "$src" -type f)
+
+  if [ "$seeded" -gt 0 ]; then
+    info "Seeded $seeded template file(s) into $WORKSPACE (existing files left untouched)"
+  fi
 }
 
 existing_sandbox_workspace() {
@@ -103,7 +130,7 @@ hdr "Workspace bootstrap"
 
 choose_workspace
 mkdir -p "$WORKSPACE"
-[ -f "$WORKSPACE/.gitkeep" ] || touch "$WORKSPACE/.gitkeep"
+seed_workspace
 ok "$WORKSPACE ready (mounted into the sandbox at launch)"
 
 if [ ! -f .env ]; then
