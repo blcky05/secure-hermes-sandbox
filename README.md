@@ -32,6 +32,8 @@ LLM credentials stay on the host and are injected through sbx's credential proxy
 
 This builds the backend (Presidio + Firecrawl + sanitizer), creates the `secure-hermes` sandbox, and drops you into a shell. Type `hermes` to launch the agent.
 
+`HermesWorkspace/AGENTS.md` is auto-loaded into Hermes' system prompt at startup — edit it to add project-specific conventions or amend the default sandbox-environment guidance.
+
 Re-attach later (preserving installs, memory, and history):
 
 ```sh
@@ -71,14 +73,16 @@ Recreate the sandbox after either change.
 
 Hermes talks to Firecrawl through `FIRECRAWL_API_URL=http://host.docker.internal:5050`. The proxy intercepts `/v1/*` and `/v2/*`, runs the user-controlled fields through Presidio, and forwards the scrubbed request:
 
-| Route      | Fields scrubbed   |
-| ---------- | ----------------- |
-| `/search`  | `query`           |
-| `/scrape`  | `url`, `prompt`   |
-| `/extract` | `urls`, `prompt`  |
-| `/crawl`   | `url`, `prompt`   |
+| Route      | Fields scrubbed  |
+| ---------- | ---------------- |
+| `/search`  | `query`          |
+| `/scrape`  | `url`, `prompt`  |
+| `/extract` | `urls`, `prompt` |
+| `/crawl`   | `url`, `prompt`  |
 
 Default entities: credit cards, API keys, emails, phone numbers, IP addresses, SSNs, IBANs, people, locations.
+
+Hermes is also locked down at the config layer: `web.backend: firecrawl` pins the search backend and `agent.disabled_toolsets: [browser]` removes the in-VM browser tools, so the agent cannot bypass the proxy via an alternative web provider or direct Chromium call.
 
 Every redaction is logged with the original and scrubbed values so you can audit what would have left the VM:
 

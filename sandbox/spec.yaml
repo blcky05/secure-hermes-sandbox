@@ -39,6 +39,14 @@ commands:
         cat > /home/agent/.hermes/config.yaml <<'YAML'
         terminal:
           backend: local
+        agent:
+          disabled_toolsets:
+            - browser
+        web:
+          backend: firecrawl
         YAML
       user: '1000'
-      description: Pin Hermes terminal backend to local (the sbx microVM is the sandbox)
+      description: >-
+        Write Hermes config: pin terminal to local (the microVM is the sandbox),
+        disable the browser toolset (no in-VM Chromium; would bypass the proxy),
+        and pin web search to Firecrawl so all web traffic goes via FIRECRAWL_API_URL.
