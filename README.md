@@ -1,33 +1,28 @@
 # Secure Hermes Sandbox
 
-Run [NousResearch Hermes Agent](https://github.com/NousResearch/hermes-agent) inside a Docker Sandbox (`sbx`) microVM, with web access forced through a local sanitizer proxy.
-
-The stack provides:
-
-- A `shell` sandbox named `secure-hermes`.
-- A `hermes-secure` sbx mixin that installs Hermes, sets `FIRECRAWL_API_URL`, and pins Hermes' terminal backend to `local`.
-- A Hono/TypeScript proxy on `localhost:5050` that scrubs Firecrawl requests with Microsoft Presidio before forwarding to self-hosted Firecrawl.
-- Host-side LLM credentials via sbx's built-in credential proxy; keys do not enter the VM.
+Run [NousResearch Hermes Agent](https://github.com/NousResearch/hermes-agent) inside a [Docker Sandbox](https://docs.docker.com/ai/sandboxes/) (`sbx`) microVM, with web access forced through a local sanitizer that strips PII with [Microsoft Presidio](https://microsoft.github.io/presidio/) before forwarding to [self-hosted Firecrawl](https://github.com/firecrawl/firecrawl/blob/main/SELF_HOST.md).
 
 ```
-Hermes in sbx
-  -> FIRECRAWL_API_URL=http://host.docker.internal:5050
-  -> sanitizer-proxy
-  -> Presidio analyzer/anonymizer
-  -> Firecrawl
+Hermes (sbx microVM)
+  │  FIRECRAWL_API_URL = http://host.docker.internal:5050
+  ▼
+sanitizer-proxy  (Presidio analyze + anonymize)
+  │
+  ▼
+Firecrawl
 ```
+
+LLM credentials stay on the host and are injected through sbx's credential proxy; keys never enter the VM.
 
 ## Prerequisites
 
-- macOS with Docker Desktop running.
+- macOS with Docker Desktop running
 - Docker Sandboxes CLI:
-
-```sh
-brew install docker/tap/sbx
-sbx login
-```
-
-- Around 6 GB free disk for the Firecrawl stack.
+  ```sh
+  brew install docker/tap/sbx
+  sbx login
+  ```
+- ~6 GB free disk for the Firecrawl stack
 
 ## Quick Start
 
@@ -35,146 +30,80 @@ sbx login
 ./setup.sh
 ```
 
-On first run, this starts the backend services and creates the sandbox with:
+This builds the backend (Presidio + Firecrawl + sanitizer), creates the `secure-hermes` sandbox, and drops you into a shell. Type `hermes` to launch the agent.
+
+Re-attach later (preserving installs, memory, and history):
 
 ```sh
-sbx run --name secure-hermes --kit ./sandbox shell
+sbx run secure-hermes      # or pick it from the sbx TUI, or re-run ./setup.sh
 ```
 
-Inside the sandbox, start Hermes with:
-
-```sh
-hermes
-```
-
-The mixin writes Hermes config so terminal/code execution uses the microVM itself:
-
-```yaml
-terminal:
-  backend: local
-```
-
-## Restarting
-
-Any of these restart the same sandbox and preserve its internal state:
-
-```sh
-sbx run secure-hermes
-./setup.sh
-```
-
-You can also use the Docker Sandboxes TUI (`sbx`) and run `secure-hermes` there.
-
-Do not recreate the sandbox unless you intentionally want a fresh VM. `sbx rm secure-hermes` deletes Hermes' internal state (`~/.hermes`, OAuth tokens, memories, history). Files in `HermesWorkspace/` stay on the host.
+> `sbx rm secure-hermes` wipes Hermes' internal state (`~/.hermes`, OAuth tokens, memory, history). Files in `HermesWorkspace/` survive on the host.
 
 ## Credentials
 
-Set LLM provider keys on the host:
+LLM provider keys live in your host keychain and are injected into outbound requests by sbx's [credential proxy](https://docs.docker.com/ai/sandboxes/security/credentials/) — they never enter the VM. Inside the sandbox the corresponding env vars read `proxy-managed`; that is expected.
+
+Any [built-in service](https://docs.docker.com/ai/sandboxes/security/credentials/#built-in-services) (`anthropic`, `openai`, `google`, `groq`, `mistral`, `xai`, `aws`, …) works out of the box:
 
 ```sh
-sbx secret set -g anthropic
-sbx secret set -g openai
-sbx secret set -g openrouter
+sbx secret set -g anthropic   # ANTHROPIC_API_KEY
+sbx secret set -g openai      # OPENAI_API_KEY
+sbx secret set -g google      # GEMINI_API_KEY / GOOGLE_API_KEY
 ```
 
-The built-in `shell` agent already wires these providers through the sbx credential proxy. Inside the sandbox the env vars show `proxy-managed`; that is expected.
-
-If you add a secret after creating the sandbox, recreate the sandbox to pick it up:
+**Global vs sandbox-scoped.** `-g` secrets apply to every sandbox but only bind at sandbox creation — recreate to pick up a new one (`sbx rm secure-hermes && ./setup.sh`). Sandbox-scoped secrets take effect immediately, no recreation needed:
 
 ```sh
-sbx rm secure-hermes
-./setup.sh
+sbx secret set secure-hermes anthropic
 ```
 
-If you prefer OAuth, run `hermes setup` inside the sandbox and pick Nous Portal. That token lives inside the sandbox volume.
+**Adding a non-built-in provider** (OpenRouter, self-hosted endpoints, …) requires two changes:
+
+1. **Credential** — use [`sbx secret set-custom`](https://docs.docker.com/ai/sandboxes/security/credentials/#custom-secrets) for an ad-hoc binding, or declare the service in `sandbox/spec.yaml` under `credentials.sources` (see [Kits → Authenticate to external services](https://docs.docker.com/ai/sandboxes/customize/kits/#authenticate-to-external-services)).
+2. **Network** — add the provider's domain to `network.allowedDomains` in `sandbox/spec.yaml`.
+
+Recreate the sandbox after either change.
+
+**OAuth.** Run `hermes setup` inside the sandbox and pick Nous Portal.
 
 ## Web Search Sanitization
 
-Hermes uses Firecrawl through:
+Hermes talks to Firecrawl through `FIRECRAWL_API_URL=http://host.docker.internal:5050`. The proxy intercepts `/v1/*` and `/v2/*`, runs the user-controlled fields through Presidio, and forwards the scrubbed request:
 
-```sh
-FIRECRAWL_API_URL=http://host.docker.internal:5050
-```
+| Route      | Fields scrubbed   |
+| ---------- | ----------------- |
+| `/search`  | `query`           |
+| `/scrape`  | `url`, `prompt`   |
+| `/extract` | `urls`, `prompt`  |
+| `/crawl`   | `url`, `prompt`   |
 
-The proxy supports Firecrawl `/v1/*` and `/v2/*` routes. It scans these request fields before forwarding:
+Default entities: credit cards, API keys, emails, phone numbers, IP addresses, SSNs, IBANs, people, locations.
 
-- `/search`: `query`
-- `/scrape`: `url`, `prompt`
-- `/extract`: `urls`, `prompt`
-- `/crawl`: `url`, `prompt`
-
-Presidio currently redacts credit cards, API keys, emails, phone numbers, IP addresses, SSNs, IBANs, people, and locations. Redaction events are logged with the original and scrubbed values so you can audit what would have left the sandbox.
-
-## Observability
-
-CLI logs:
+Every redaction is logged with the original and scrubbed values so you can audit what would have left the VM:
 
 ```sh
 docker compose logs -f sanitizer-proxy
-docker compose logs -f firecrawl
-docker compose logs -f sanitizer-proxy firecrawl
 ```
 
-Docker Desktop:
+## Endpoints
 
-- Open `docker-desktop://dashboard/logs`
-- Or use Docker Desktop -> Containers -> `secure-hermes-sandbox` -> service -> Logs
+- Sanitizer health: <http://localhost:5050/health>
+- Firecrawl API: <http://localhost:3002>
 
-The Firecrawl API is reachable on:
-
-```sh
-http://localhost:3002
-```
-
-The sanitizer proxy health endpoint is:
-
-```sh
-http://localhost:5050/health
-```
+Port 5050 is used on the host because macOS AirPlay binds 5000.
 
 ## Teardown
 
-Stop backend services:
-
 ```sh
-docker compose down
-```
-
-Destroy the sandbox:
-
-```sh
-sbx rm secure-hermes
-```
-
-Delete backend volumes too:
-
-```sh
-docker compose down -v
+docker compose down        # stop backend
+sbx rm secure-hermes       # destroy sandbox
+docker compose down -v     # also drop backend volumes
 ```
 
 ## Troubleshooting
 
-- `agent "hermes" not found`: use this repo's mixin flow (`sbx run --name secure-hermes --kit ./sandbox shell`). Hermes is installed inside a `shell` sandbox; it is not an sbx built-in agent type.
-- Search returns 404: rebuild the proxy with `docker compose up -d --build sanitizer-proxy`; Hermes uses Firecrawl `/v2/*`.
-- Search reaches proxy but leaks URL query data: check logs for `field=url` or `field=urls[...]`; scrape/extract/crawl URLs should be scanned.
-- Firecrawl search returns weak/no results: configure `SEARXNG_ENDPOINT` in `.env` or accept Firecrawl's default search backend limitations.
-- Provider calls return 401: set the host secret with `sbx secret set -g <provider>` and recreate the sandbox.
-
-## Repository Layout
-
-```
-secure-hermes-sandbox/
-├── setup.sh
-├── docker-compose.yml
-├── .env.example
-├── sandbox/
-│   └── spec.yaml
-├── sanitizer_proxy/
-│   ├── Dockerfile
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── src/
-│       └── server.ts
-└── HermesWorkspace/
-    └── .gitkeep
-```
+- **`agent "hermes" not found`** — Hermes is not an sbx built-in. Use `./setup.sh` (or `sbx run --name secure-hermes --kit ./sandbox shell`).
+- **Search returns 404** — rebuild the proxy: `docker compose up -d --build sanitizer-proxy`.
+- **Provider call returns 401** — set the host secret (`sbx secret set -g <provider>`) and recreate the sandbox.
+- **Weak/no search results** — set `SEARXNG_ENDPOINT` in `.env`; otherwise Firecrawl falls back to rate-limited Google scraping.

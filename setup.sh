@@ -26,6 +26,56 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || abort "$2"
 }
 
+expand_path() {
+  local raw="$1"
+  case "$raw" in
+    "~") raw="$HOME" ;;
+    "~/"*) raw="$HOME/${raw#~/}" ;;
+  esac
+  [[ "$raw" = /* ]] || raw="$SCRIPT_DIR/$raw"
+  print -r -- "${raw:A}"
+}
+
+choose_workspace() {
+  local default_parent="$SCRIPT_DIR"
+  local input parent
+
+  while true; do
+    if [ -t 0 ]; then
+      printf "HermesWorkspace parent directory [%s]: " "$default_parent"
+      IFS= read -r input
+    else
+      input=""
+    fi
+
+    [ -n "$input" ] || input="$default_parent"
+    parent="$(expand_path "$input")"
+
+    if [ ! -d "$parent" ]; then
+      err "Invalid workspace parent: '$parent' does not exist or is not a directory."
+    elif [ ! -w "$parent" ]; then
+      err "Invalid workspace parent: '$parent' is not writable."
+    else
+      WORKSPACE_PARENT="$parent"
+      WORKSPACE="$WORKSPACE_PARENT/HermesWorkspace"
+      return 0
+    fi
+
+    [ -t 0 ] || exit 1
+  done
+}
+
+existing_sandbox_workspace() {
+  local sandbox_name="$1"
+  sbx ls 2>/dev/null | awk -v name="$sandbox_name" '
+    NR > 1 && $1 == name {
+      start = (NF >= 5 ? 5 : 4)
+      for (i = start; i <= NF; i++) printf "%s%s", (i == start ? "" : " "), $i
+      print ""
+    }
+  '
+}
+
 hdr "Preflight"
 
 require_cmd docker \
@@ -51,9 +101,10 @@ ok "sbx CLI available: $(sbx --version 2>/dev/null | head -n1 || echo unknown)"
 
 hdr "Workspace bootstrap"
 
-mkdir -p HermesWorkspace
-[ -f HermesWorkspace/.gitkeep ] || touch HermesWorkspace/.gitkeep
-ok "HermesWorkspace/ ready (mounted into the sandbox at launch)"
+choose_workspace
+mkdir -p "$WORKSPACE"
+[ -f "$WORKSPACE/.gitkeep" ] || touch "$WORKSPACE/.gitkeep"
+ok "$WORKSPACE ready (mounted into the sandbox at launch)"
 
 if [ ! -f .env ]; then
   cp .env.example .env
@@ -101,7 +152,6 @@ fi
 hdr "Launch Hermes sandbox"
 
 KIT_PATH="$SCRIPT_DIR/sandbox"
-WORKSPACE="$SCRIPT_DIR/HermesWorkspace"
 
 info "Sandbox kit:    $KIT_PATH"
 info "Workspace mount: $WORKSPACE"
@@ -154,6 +204,15 @@ cd "$WORKSPACE"
 SANDBOX_NAME="secure-hermes"
 
 if sbx ls 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$SANDBOX_NAME"; then
+  EXISTING_WORKSPACE="$(existing_sandbox_workspace "$SANDBOX_NAME")"
+  if [ -n "$EXISTING_WORKSPACE" ] && [ "${EXISTING_WORKSPACE:A}" != "${WORKSPACE:A}" ]; then
+    err "Sandbox '$SANDBOX_NAME' already exists with workspace:"
+    err "  $EXISTING_WORKSPACE"
+    err "Requested workspace:"
+    err "  $WORKSPACE"
+    err "Run with that existing workspace, or remove the sandbox first: sbx rm $SANDBOX_NAME"
+    exit 1
+  fi
   ok "Sandbox '$SANDBOX_NAME' exists — attaching (preserves Hermes memory and installed deps)."
   exec sbx run "$SANDBOX_NAME"
 else
