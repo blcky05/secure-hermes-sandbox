@@ -20,6 +20,7 @@ network:
     - 'objects.githubusercontent.com:443'
     - 'api.github.com:443'
     - 'astral.sh:443'
+    - 'releases.astral.sh:443'
     - 'pypi.org:443'
     - 'files.pythonhosted.org:443'
     - 'deb.debian.org:80'
