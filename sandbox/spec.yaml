@@ -25,11 +25,28 @@ network:
     - 'files.pythonhosted.org:443'
     - 'deb.debian.org:80'
     - 'security.debian.org:80'
+    - 'openrouter.ai:443'
+  serviceDomains:
+    openrouter.ai: openrouter # Tag traffic to this domain
+  serviceAuth:
+    openrouter:
+      headerName: Authorization # Overwrite this header
+      valueFormat: "Bearer %s"
+
+credentials:
+  sources:
+    openrouter: 
+      file: 
+        path: "/home/chris/Repositories/secure-hermes-sandbox/sandbox/openrouter.key"
+      # env:
+      #   - OPENROUTER_GENERAL_API_KEY # Host-side credential lookup
 
 environment:
   variables:
     FIRECRAWL_API_URL: 'http://host.docker.internal:5050'
     TIRITH_BASH_MODE: 'enter'
+  proxyManaged:
+    - OPENROUTER_API_KEY # Set the in-VM env var to "proxy-managed"
 
 commands:
   install:
