@@ -26,11 +26,10 @@ Read this before reaching for any tool that touches the network.
 
 ## Credentials
 
-LLM provider keys (Anthropic, OpenAI, Google, …) live on the host keychain
-and are injected into outbound API requests by sbx's credential proxy. Inside
-this VM the corresponding env vars read `proxy-managed`; that is expected.
-Never try to print, copy, or override these values — the real key never enters
-the VM.
+LLM provider keys live on the host keychain and are injected into outbound API
+requests by sbx's credential proxy. Inside this VM the corresponding env vars
+read `proxy-managed`; that is expected. Never try to print, copy, or override
+these values — the real key never enters the VM.
 
 ## If a web fetch fails
 

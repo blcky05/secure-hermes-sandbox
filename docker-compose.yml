@@ -24,8 +24,6 @@ services:
     container_name: secure-hermes-pasteguard
     networks:
       - secure-search-net
-    depends_on:
-      presidio-analyzer:
     environment:
       # Provider endpoints (these are the env names referenced in the Pasteguard config)
       OPENAI_PROVIDER_URL: ${OPENAI_PROVIDER_URL:-https://openrouter.ai/api/v1}
