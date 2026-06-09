@@ -17,6 +17,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT_FILE="$SCRIPT_DIR/presidio/corp-ca.crt"
+EXTRA_TARGETS=(
+    "$SCRIPT_DIR/sanitizer_proxy/corp-ca.crt"
+)
 POWERSHELL="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
 
 if [[ -x "$POWERSHELL" ]]; then
@@ -72,5 +75,12 @@ if command -v openssl &>/dev/null; then
     COUNT=$(grep -c "BEGIN CERTIFICATE" "$OUT_FILE" || true)
     echo "  $COUNT certificate(s) in $OUT_FILE — OK"
 fi
+
+# Copy bundle to all extra targets
+for TARGET in "${EXTRA_TARGETS[@]}"; do
+    cp "$OUT_FILE" "$TARGET"
+    echo "  Copied → $TARGET"
+done
+
 echo ""
-echo "Done. Run 'docker compose build presidio-analyzer' (or './setup.sh') to apply."
+echo "Done. Run 'docker compose build' (or './setup.sh') to apply."

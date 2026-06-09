@@ -15,17 +15,16 @@ services:
       - secure-search-net
     depends_on:
       presidio-analyzer:
-        condition: service_healthy
     environment:
       # Provider endpoints (these are the env names referenced in the Pasteguard config)
       OPENAI_PROVIDER_URL: ${OPENAI_PROVIDER_URL:-https://openrouter.ai/api/v1}
       ANTHROPIC_PROVIDER_URL: ${ANTHROPIC_PROVIDER_URL:-https://api.anthropic.com}
       CODEX_PROVIDER_URL: ${CODEX_PROVIDER_URL:-https://chatgpt.com/backend-api/codex}
 
-      # Presidio URL used by Pasteguard (must point to the analyzer/anonymizer service)
-      PRESIDIO_ANALYZER_URL: ${PRESIDIO_ANALYZER_URL:-http://presidio-analyzer:3000}
+      # Use PasteGuard's own internal Presidio (runs on :5002 inside the container via supervisord)
+      PRESIDIO_ANALYZER_URL: ${PRESIDIO_ANALYZER_URL:-http://localhost:5002}
 
-      # Languages must match the spaCy models installed in the presidio-analyzer image
+      # Languages must match the spaCy models baked into the PasteGuard eu image
       PASTEGUARD_LANGUAGES: ${PASTEGUARD_LANGUAGES:-en,de}
 
       # Optional dashboard password (left unset by default)
@@ -34,49 +33,14 @@ services:
       - ./pasteguard/config.yaml:/pasteguard/config.yaml:ro
       - ./pasteguard/data:/data  # for sqlite DB and logs (matches logging.database path)
     ports:
-      - "3100:3000"
+      - "3100:3000"   # PasteGuard proxy
+      - "5001:5002"   # Presidio analyzer (internal, exposed for host access and sanitizer-proxy)
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
       interval: 5s
       timeout: 3s
       retries: 30
-      start_period: 30s
-    logging: *default-logging
-
-  presidio-analyzer:
-    build:
-      context: ./presidio
-      dockerfile: Dockerfile.analyzer
-    container_name: secure-hermes-presidio-analyzer
-    networks: [secure-search-net]
-    environment:
-      GUNICORN_TIMEOUT: 30  
-      WORKER_TIMEOUT: 30
-      NLP_CONF_FILE: /app/nlp-config.yaml  
-    volumes:  
-      - ./presidio/nlp-config.yaml:/app/nlp-config.yaml:ro  
-    ports:
-      - "5001:3000"
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-      start_period: 60s
-    logging: *default-logging
-
-  presidio-anonymizer:
-    image: mcr.microsoft.com/presidio-anonymizer:latest
-    container_name: secure-hermes-presidio-anonymizer
-    networks: [secure-search-net]
-    ports:
-      - "5002:3000"
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-      start_period: 15s
+      start_period: 90s  # eu image loads 9 spaCy models; Presidio needs extra time
     logging: *default-logging
 
   firecrawl-redis:
@@ -183,8 +147,7 @@ services:
     container_name: secure-hermes-sanitizer-proxy
     networks: [secure-search-net]
     environment:
-      PRESIDIO_ANALYZER_URL: "http://presidio-analyzer:3000"
-      PRESIDIO_ANONYMIZER_URL: "http://presidio-anonymizer:3000"
+      PASTEGUARD_URL: "http://pasteguard:3000"
       FIRECRAWL_URL: "http://firecrawl:3002"
       FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
       REQUEST_TIMEOUT_SECONDS: "30"
@@ -193,10 +156,8 @@ services:
       # 5050 on host (macOS AirPlay binds 5000); container still on 5000.
       - "5050:5000"
     depends_on:
-      presidio-analyzer:
-        condition: service_started
-      presidio-anonymizer:
-        condition: service_started
+      pasteguard:
+        condition: service_healthy
       firecrawl:
         condition: service_started
     healthcheck:

@@ -6,3 +6,4 @@ __pycache__/
 sandbox/openrouter.key
 presidio/ca-certificates.crt
 presidio/corp-ca.crt
+sanitizer_proxy/corp-ca.crt

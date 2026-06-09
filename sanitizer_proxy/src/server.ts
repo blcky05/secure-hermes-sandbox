@@ -3,60 +3,14 @@ import { Hono } from "hono";
 
 type JsonObject = Record<string, unknown>;
 
-type AnalyzerResult = {
-  entity_type?: string;
-  score?: number;
-  start?: number;
-  end?: number;
-};
-
-const presidioAnalyzerUrl = stripTrailingSlash(
-  process.env.PRESIDIO_ANALYZER_URL ?? "http://presidio-analyzer:3000",
-);
-const presidioAnonymizerUrl = stripTrailingSlash(
-  process.env.PRESIDIO_ANONYMIZER_URL ?? "http://presidio-anonymizer:3000",
+const pasteguardUrl = stripTrailingSlash(
+  process.env.PASTEGUARD_URL ?? "http://pasteguard:3000",
 );
 const firecrawlUrl = stripTrailingSlash(process.env.FIRECRAWL_URL ?? "http://firecrawl:3002");
 const firecrawlApiKey = (process.env.FIRECRAWL_API_KEY ?? "").trim();
 const requestTimeoutMs = Number(process.env.REQUEST_TIMEOUT_SECONDS ?? "30") * 1000;
 const port = Number(process.env.PORT ?? "5000");
 const logLevel = (process.env.LOG_LEVEL ?? "INFO").toUpperCase();
-
-const apiKeyRecognizer = {
-  name: "API Key Recognizer",
-  supported_language: "en",
-  supported_entity: "API_KEY",
-  patterns: [
-    { name: "sk-prefixed secret", regex: "sk-[a-zA-Z0-9]{20,}", score: 0.9 },
-    { name: "anthropic-style secret", regex: "sk-ant-[a-zA-Z0-9\\-_]{20,}", score: 0.95 },
-  ],
-  context: ["api", "key", "secret", "token", "bearer"],
-};
-
-const analyzerEntities = [
-  "CREDIT_CARD",
-  "EMAIL_ADDRESS",
-  "PHONE_NUMBER",
-  "US_SSN",
-  "IBAN_CODE",
-  "IP_ADDRESS",
-  "PERSON",
-  "LOCATION",
-  "API_KEY",
-];
-
-const anonymizerOperators = {
-  DEFAULT: { type: "replace", new_value: "<REDACTED>" },
-  API_KEY: { type: "replace", new_value: "<API_KEY>" },
-  CREDIT_CARD: { type: "replace", new_value: "<CREDIT_CARD>" },
-  EMAIL_ADDRESS: { type: "replace", new_value: "<EMAIL>" },
-  PHONE_NUMBER: { type: "replace", new_value: "<PHONE>" },
-  US_SSN: { type: "replace", new_value: "<SSN>" },
-  IBAN_CODE: { type: "replace", new_value: "<IBAN>" },
-  IP_ADDRESS: { type: "replace", new_value: "<IP>" },
-  PERSON: { type: "replace", new_value: "<PERSON>" },
-  LOCATION: { type: "replace", new_value: "<LOCATION>" },
-};
 
 const hopByHopHeaders = new Set([
   "host",
@@ -115,67 +69,39 @@ async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
   }
 }
 
-async function analyze(text: string): Promise<AnalyzerResult[]> {
-  const data = await fetchJson(`${presidioAnalyzerUrl}/analyze`, {
+async function maskText(text: string): Promise<{ masked: string; entities: { type: string }[] }> {
+  const data = await fetchJson(`${pasteguardUrl}/api/mask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text,
-      language: "en",
-      entities: analyzerEntities,
-      ad_hoc_recognizers: [apiKeyRecognizer],
-    }),
+    body: JSON.stringify({ text, detect: ["pii", "secrets"] }),
   });
 
-  if (!Array.isArray(data)) {
-    throw new Error(`Unexpected analyzer response shape: ${JSON.stringify(data)}`);
+  if (!isJsonObject(data) || typeof data.masked !== "string") {
+    throw new Error(`Unexpected mask response shape: ${JSON.stringify(data)}`);
   }
-  return data as AnalyzerResult[];
-}
-
-async function anonymize(text: string, analyzerResults: AnalyzerResult[]): Promise<string> {
-  if (analyzerResults.length === 0) {
-    return text;
-  }
-
-  const data = await fetchJson(`${presidioAnonymizerUrl}/anonymize`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text,
-      analyzer_results: analyzerResults,
-      anonymizers: anonymizerOperators,
-    }),
-  });
-
-  if (!isJsonObject(data) || typeof data.text !== "string") {
-    throw new Error(`Unexpected anonymizer response: ${JSON.stringify(data)}`);
-  }
-  return data.text;
+  return {
+    masked: data.masked as string,
+    entities: Array.isArray(data.entities) ? (data.entities as { type: string }[]) : [],
+  };
 }
 
 async function scrubString(original: string, endpoint: string, field: string): Promise<string> {
-  const analyzerResults = await analyze(original);
-  const findings = analyzerResults.map((result) => ({
-    entity_type: result.entity_type,
-    score: result.score,
-  }));
+  const { masked, entities } = await maskText(original);
 
-  if (findings.length === 0) {
+  if (entities.length === 0) {
     info("scan endpoint=%s field=%s len=%d findings=none", endpoint, field, original.length);
     return original;
   }
 
-  const redacted = await anonymize(original, analyzerResults);
   warn(
     "PII REDACTED before Firecrawl. endpoint=%s field=%s findings=%s | original=%o | scrubbed=%o",
     endpoint,
     field,
-    asJson(findings),
+    asJson(entities.map((e) => e.type)),
     original,
-    redacted,
+    masked,
   );
-  return redacted;
+  return masked;
 }
 
 async function scrubField(body: JsonObject, field: string, endpoint: string): Promise<void> {

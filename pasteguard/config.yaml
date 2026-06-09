@@ -55,7 +55,7 @@ masking:
 
 # PII Detection settings (Microsoft Presidio)
 pii_detection:
-  presidio_url: ${PRESIDIO_ANALYZER_URL:-http://localhost:5001}
+  presidio_url: ${PRESIDIO_ANALYZER_URL:-http://localhost:5002}
 
   # Supported languages for PII detection
   # Auto-detects language from input text and uses appropriate model
