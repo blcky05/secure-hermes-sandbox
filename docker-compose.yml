@@ -8,6 +8,17 @@ x-logging: &default-logging
     compress: "true"
 
 services:
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:latest
+    container_name: hindsight
+    networks:
+      - secure-search-net
+    depends_on:
+      - pasteguard
+    environment:
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_MODEL: qwen/qwen3.5-9b
+      HINDSIGHT_API_LLM_BASE_URL: http://pasteguard:3000/openai/v1
   pasteguard:
     image: ghcr.io/sgasser/pasteguard:eu
     container_name: secure-hermes-pasteguard
