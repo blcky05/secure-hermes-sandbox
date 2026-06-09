@@ -4,9 +4,10 @@ name: hermes-secure
 displayName: Hermes (Secure Sandbox)
 description: >-
   Mixin on top of the built-in `shell` agent. Installs Hermes and points
-  its web search at a host-side Presidio + Firecrawl proxy. LLM credentials
-  (anthropic, openai, openrouter) are already proxy-managed by `shell` — we
-  only add Hermes-specific config here.
+  its web search at a host-side Presidio + Firecrawl proxy. LLM traffic
+  flows through a PasteGuard sanitizer and is forwarded to the LLM provider,
+  here OpenRouter. Credentials are already proxy-managed by `shell` —
+  we only add Hermes-specific config here.
 
 network:
   allowedDomains:
@@ -27,27 +28,17 @@ network:
     - 'files.pythonhosted.org:443'
     - 'deb.debian.org:80'
     - 'security.debian.org:80'
-    - 'openrouter.ai:443'
   serviceDomains:
-    openrouter.ai: openrouter # Tag traffic to this domain
-    host.docker.internal: openrouter-proxy
+    host.docker.internal: llm-proxy
   serviceAuth:
-    openrouter:
-      headerName: Authorization # Overwrite this header
-      valueFormat: "Bearer %s"
-    openrouter-proxy:
+    llm-proxy:
       headerName: Authorization # Overwrite this header
       valueFormat: "Bearer %s"
 
 credentials:
   sources:
-    openrouter: 
-      file: 
-        path: "/home/chris/Repositories/secure-hermes-sandbox/sandbox/openrouter.key"
-      # env:
-      #   - OPENROUTER_GENERAL_API_KEY # Host-side credential lookup
-    openrouter-proxy: 
-      file: 
+    llm-proxy:
+      file:
         path: "/home/chris/Repositories/secure-hermes-sandbox/sandbox/openrouter.key"
       # env:
       #   - OPENROUTER_GENERAL_API_KEY # Host-side credential lookup

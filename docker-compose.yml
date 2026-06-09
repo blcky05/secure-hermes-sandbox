@@ -25,10 +25,13 @@ services:
       # Presidio URL used by Pasteguard (must point to the analyzer/anonymizer service)
       PRESIDIO_ANALYZER_URL: ${PRESIDIO_ANALYZER_URL:-http://presidio-analyzer:3000}
 
+      # Languages must match the spaCy models installed in the presidio-analyzer image
+      PASTEGUARD_LANGUAGES: ${PASTEGUARD_LANGUAGES:-en,de}
+
       # Optional dashboard password (left unset by default)
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
     volumes:
-      - ./pasteguard/config.yaml:/etc/pasteguard/config.yaml:ro
+      - ./pasteguard/config.yaml:/pasteguard/config.yaml:ro
       - ./pasteguard/data:/data  # for sqlite DB and logs (matches logging.database path)
     ports:
       - "3100:3000"
