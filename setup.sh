@@ -143,6 +143,14 @@ fi
 
 hdr "Backend services (Presidio + Firecrawl + sanitizer)"
 
+info "Refreshing corporate CA certificates for Docker build..."
+if bash "$SCRIPT_DIR/refresh-corp-ca.sh"; then
+  ok "Corporate CA bundle written to presidio/corp-ca.crt"
+else
+  warn "refresh-corp-ca.sh failed — proceeding without updated CA bundle."
+  warn "If the presidio-analyzer build fails, run ./refresh-corp-ca.sh manually."
+fi
+
 "${DC[@]}" up --build -d
 
 poll_url() {

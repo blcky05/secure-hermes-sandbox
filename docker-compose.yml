@@ -41,7 +41,9 @@ services:
     logging: *default-logging
 
   presidio-analyzer:
-    image: mcr.microsoft.com/presidio-analyzer:latest
+    build:
+      context: ./presidio
+      dockerfile: Dockerfile.analyzer
     container_name: secure-hermes-presidio-analyzer
     networks: [secure-search-net]
     environment:

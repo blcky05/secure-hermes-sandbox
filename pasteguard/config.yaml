@@ -66,7 +66,7 @@ pii_detection:
   # Available (24 languages): ca, zh, hr, da, nl, en, fi, fr, de, el,
   #   it, ja, ko, lt, mk, nb, pl, pt, ro, ru, sl, es, sv, uk
   # See docker/presidio/languages.yaml for full list with details
-  languages: ${PASTEGUARD_LANGUAGES:-en}
+  languages: ${PASTEGUARD_LANGUAGES:-en,de}
   # languages:
   #   - en
   #   - de
