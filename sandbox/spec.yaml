@@ -12,6 +12,8 @@ network:
   allowedDomains:
     - 'host.docker.internal:5050'
     - 'localhost:5050'
+    - 'host.docker.internal:3100'
+    - 'localhost:3100'
     - 'portal.nousresearch.com:443'
     - 'inference-api.nousresearch.com:443'
     - 'raw.githubusercontent.com:443'
@@ -28,8 +30,12 @@ network:
     - 'openrouter.ai:443'
   serviceDomains:
     openrouter.ai: openrouter # Tag traffic to this domain
+    host.docker.internal: openrouter-proxy
   serviceAuth:
     openrouter:
+      headerName: Authorization # Overwrite this header
+      valueFormat: "Bearer %s"
+    openrouter-proxy:
       headerName: Authorization # Overwrite this header
       valueFormat: "Bearer %s"
 
@@ -40,11 +46,17 @@ credentials:
         path: "/home/chris/Repositories/secure-hermes-sandbox/sandbox/openrouter.key"
       # env:
       #   - OPENROUTER_GENERAL_API_KEY # Host-side credential lookup
+    openrouter-proxy: 
+      file: 
+        path: "/home/chris/Repositories/secure-hermes-sandbox/sandbox/openrouter.key"
+      # env:
+      #   - OPENROUTER_GENERAL_API_KEY # Host-side credential lookup
 
 environment:
   variables:
     FIRECRAWL_API_URL: 'http://host.docker.internal:5050'
     TIRITH_BASH_MODE: 'enter'
+    OPENROUTER_BASE_URL: 'http://host.docker.internal:3100/openai/v1'
   proxyManaged:
     - OPENROUTER_API_KEY # Set the in-VM env var to "proxy-managed"
 
